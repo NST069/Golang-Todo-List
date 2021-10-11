@@ -1,6 +1,10 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"os"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -11,23 +15,38 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-type TodoList struct {
-	List []TodoListItem
-}
-
 type TodoListItem struct {
-	ts      time.Time
-	done    bool
-	title   string
-	comment string
+	Token   []byte
+	Ts      time.Time
+	Done    bool
+	Title   string
+	Comment string
 }
 
-func GetIcon(done bool) fyne.Resource {
-	if done {
-		return theme.CheckButtonCheckedIcon()
+func WriteJSON(filename string, items []TodoListItem) {
+	b, err := json.Marshal(items)
+	if err != nil {
+		fmt.Println("Error Marshaling to json: ", err)
 	} else {
-		return theme.CheckButtonIcon()
+		err2 := os.WriteFile(filename, b, 0666)
+		if err2 != nil {
+			fmt.Println("Error writing to file: ", err)
+		}
 	}
+}
+
+func ReadJSON(filename string, v interface{}) error {
+	b, err := os.ReadFile(filename)
+	if err != nil {
+		fmt.Println("Error reading from file: ", err)
+	} else {
+		err2 := json.Unmarshal(b, &v)
+		if err2 != nil {
+			fmt.Println("Err2: ", err2)
+			return err2
+		}
+	}
+	return nil
 }
 
 func main() {
@@ -35,10 +54,22 @@ func main() {
 	w := a.NewWindow("Todo List")
 
 	var data []TodoListItem
-	//data = append(data, TodoListItem{time.Now(), false, "1", "000"})
 
+	path, err := os.Getwd()
+	filename := ""
+	if err == nil {
+		filename = path + "\\file.json"
+	}
+	file := fyne.NewMenu("File")
+	importJSON := fyne.NewMenuItem("Import From JSON", func() {
+		_ = ReadJSON(filename, &data)
+	})
+	exportJSON := fyne.NewMenuItem(("Export as JSON"), func() {
+		WriteJSON(filename, data)
+	})
+	file.Items = append(file.Items, importJSON, exportJSON)
 	menu := fyne.NewMainMenu(
-		fyne.NewMenu("File"),
+		file,
 	)
 	w.SetMainMenu(menu)
 
@@ -83,16 +114,16 @@ func main() {
 			return container.NewBorder(nil, nil, widget.NewCheck("", func(value bool) {}), widget.NewButtonWithIcon("", theme.ContentRemoveIcon(), nil), widget.NewLabel("dummy"))
 		},
 		func(id widget.ListItemID, item fyne.CanvasObject) {
-			item.(*fyne.Container).Objects[1].(*widget.Check).Checked = data[id].done
-			item.(*fyne.Container).Objects[1].(*widget.Check).OnChanged = func(value bool) { data[id].done = value }
-			item.(*fyne.Container).Objects[0].(*widget.Label).SetText(data[id].title)
+			item.(*fyne.Container).Objects[1].(*widget.Check).Checked = data[id].Done
+			item.(*fyne.Container).Objects[1].(*widget.Check).OnChanged = func(value bool) { data[id].Done = value }
+			item.(*fyne.Container).Objects[0].(*widget.Label).SetText(data[id].Title)
 			item.(*fyne.Container).Objects[2].(*widget.Button).OnTapped = func() { data = append(data[:id], data[id+1:]...) }
 		},
 	)
 	list.OnSelected = func(id widget.ListItemID) {
-		card.SetTitle(data[id].title)
-		card.SetSubTitle(data[id].ts.Format(time.RFC822))
-		content.ParseMarkdown(data[id].comment)
+		card.SetTitle(data[id].Title)
+		card.SetSubTitle(data[id].Ts.Format(time.RFC822))
+		content.ParseMarkdown(data[id].Comment)
 	}
 	list.OnUnselected = func(id widget.ListItemID) {
 		card.SetTitle("Select An Item From The List")
@@ -109,7 +140,9 @@ func main() {
 			if !b {
 				return
 			}
-			data = append(data, TodoListItem{time.Now(), false, title.Text, comment.Text})
+			ts := time.Now()
+			hash := sha256.Sum256([]byte(ts.String()))
+			data = append(data, TodoListItem{hash[:], ts, false, title.Text, comment.Text})
 		}, w)
 		d.Resize(fyne.NewSize(400, 200))
 		d.Show()
