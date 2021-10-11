@@ -1,7 +1,6 @@
 package main
 
 import (
-	"strconv"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -38,17 +37,50 @@ func main() {
 	var data []TodoListItem
 	//data = append(data, TodoListItem{time.Now(), false, "1", "000"})
 
-	setDone := widget.NewLabel("")
+	menu := fyne.NewMainMenu(
+		fyne.NewMenu("File"),
+	)
+	w.SetMainMenu(menu)
 
-	label := widget.NewLabel("Select An Item From The List")
-	hbox := container.NewHBox(setDone, label)
+	content := widget.NewRichTextFromMarkdown(``)
+	content.Scroll = container.ScrollBoth
+	card := widget.NewCard("Title", "Subtitle", content)
+
+	tbIsEditing := false
+	tbText := ""
+	entry := widget.NewMultiLineEntry()
+	toolbar := widget.NewToolbar(
+		widget.NewToolbarSpacer(),
+		widget.NewToolbarSeparator(),
+		widget.NewToolbarAction(theme.DocumentCreateIcon(), func() {
+			tbIsEditing = true
+			tbText = content.String()
+			entry.Text = tbText
+			card.SetContent(entry)
+		}),
+		widget.NewToolbarAction(theme.DocumentSaveIcon(), func() {
+			if tbIsEditing {
+				tbIsEditing = false
+				content.ParseMarkdown(entry.Text)
+				card.SetContent(content)
+				tbText = ""
+			}
+		}),
+		widget.NewToolbarAction(theme.CancelIcon(), func() {
+			if tbIsEditing {
+				tbIsEditing = false
+				card.SetContent(content)
+				tbText = ""
+			}
+		}),
+	)
 
 	list := widget.NewList(
 		func() int {
 			return len(data)
 		},
 		func() fyne.CanvasObject {
-			return container.NewBorder(nil, nil, widget.NewCheck("", func(value bool) {}), widget.NewButtonWithIcon("", theme.CancelIcon(), nil), widget.NewLabel("dummy"))
+			return container.NewBorder(nil, nil, widget.NewCheck("", func(value bool) {}), widget.NewButtonWithIcon("", theme.ContentRemoveIcon(), nil), widget.NewLabel("dummy"))
 		},
 		func(id widget.ListItemID, item fyne.CanvasObject) {
 			item.(*fyne.Container).Objects[1].(*widget.Check).Checked = data[id].done
@@ -58,15 +90,12 @@ func main() {
 		},
 	)
 	list.OnSelected = func(id widget.ListItemID) {
-		str := data[id].ts.Format(time.RFC822) + "\t" + data[id].title + "\n" + data[id].comment
-		label.SetText(str)
-		setDone.SetText(strconv.FormatBool(data[id].done))
-		//icon.SetResource(theme.DocumentIcon())
+		card.SetTitle(data[id].title)
+		card.SetSubTitle(data[id].ts.Format(time.RFC822))
+		content.ParseMarkdown(data[id].comment)
 	}
 	list.OnUnselected = func(id widget.ListItemID) {
-		label.SetText("Select An Item From The List")
-		setDone.SetText("")
-		//icon.SetResource(nil)
+		card.SetTitle("Select An Item From The List")
 	}
 
 	addNew := widget.NewButtonWithIcon("Add", theme.ContentAddIcon(), func() {
@@ -76,17 +105,19 @@ func main() {
 			widget.NewFormItem("Title", title),
 			widget.NewFormItem("Comment", comment),
 		}
-		dialog.ShowForm("Add new Item", "Add", "Cancel", items, func(b bool) {
+		d := dialog.NewForm("Add new Item", "Add", "Cancel", items, func(b bool) {
 			if !b {
 				return
 			}
 			data = append(data, TodoListItem{time.Now(), false, title.Text, comment.Text})
 		}, w)
+		d.Resize(fyne.NewSize(400, 200))
+		d.Show()
 	})
 
 	left := container.NewBorder(addNew, nil, nil, nil, list)
-
-	split := container.NewHSplit(left, container.NewCenter(hbox))
+	right := container.NewBorder(toolbar, nil, nil, nil, card)
+	split := container.NewHSplit(left, right)
 
 	split.Offset = 0.4
 	w.SetContent(split)
