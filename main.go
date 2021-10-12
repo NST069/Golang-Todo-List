@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/storage"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
@@ -53,26 +55,63 @@ func main() {
 	a := app.NewWithID("todoList")
 	w := a.NewWindow("Todo List")
 
-	var data []TodoListItem
+	var list *widget.List
 
-	path, err := os.Getwd()
-	filename := ""
-	if err == nil {
-		filename = path + "\\file.json"
+	var data []TodoListItem
+	var luri fyne.ListableURI
+	path, perr := os.Getwd()
+	if perr != nil {
+		log.Fatal("Perr: ", perr)
 	}
+	luri, lerr := storage.ListerForURI(storage.NewFileURI(path))
+	if lerr != nil {
+		log.Fatal("Lerr: ", lerr, "\n\t", storage.NewFileURI(path))
+	}
+
 	file := fyne.NewMenu("File")
 	importJSON := fyne.NewMenuItem("Import From JSON", func() {
-		_ = ReadJSON(filename, &data)
+		fd := dialog.NewFileOpen(func(reader fyne.URIReadCloser, err error) {
+			if err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			if reader == nil {
+				log.Println("Cancelled")
+				return
+			}
+			_ = ReadJSON(reader.URI().Path(), &data)
+			list.Refresh()
+		}, w)
+		fd.SetLocation(luri)
+		fd.SetFilter(storage.NewExtensionFileFilter([]string{".json"}))
+		fd.Show()
 	})
 	exportJSON := fyne.NewMenuItem(("Export as JSON"), func() {
-		WriteJSON(filename, data)
+		fd := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
+			if err != nil {
+				dialog.ShowError(err, w)
+				return
+			}
+			if writer == nil {
+				log.Println("Cancelled")
+				return
+			}
+			WriteJSON(writer.URI().Path(), data)
+		}, w)
+		fd.SetDismissText("test")
+		fd.SetFileName("TodoList.json")
+		fd.SetLocation(luri)
+		fd.SetFilter(storage.NewExtensionFileFilter([]string{".json"}))
+		fd.Show()
 	})
+
 	file.Items = append(file.Items, importJSON, exportJSON)
 	menu := fyne.NewMainMenu(
 		file,
 	)
 	w.SetMainMenu(menu)
 
+	var currentItemId int
 	content := widget.NewRichTextFromMarkdown(``)
 	content.Scroll = container.ScrollBoth
 	card := widget.NewCard("Title", "Subtitle", content)
@@ -92,38 +131,46 @@ func main() {
 		widget.NewToolbarAction(theme.DocumentSaveIcon(), func() {
 			if tbIsEditing {
 				tbIsEditing = false
-				content.ParseMarkdown(entry.Text)
-				card.SetContent(content)
 				tbText = ""
+				data[currentItemId].Comment = entry.Text
+				content.ParseMarkdown(data[currentItemId].Comment)
+				card.SetContent(content)
+				card.Refresh()
 			}
 		}),
 		widget.NewToolbarAction(theme.CancelIcon(), func() {
 			if tbIsEditing {
 				tbIsEditing = false
-				card.SetContent(content)
 				tbText = ""
+				card.SetContent(content)
+				card.Refresh()
 			}
 		}),
 	)
 
-	list := widget.NewList(
+	list = widget.NewList(
 		func() int {
 			return len(data)
 		},
 		func() fyne.CanvasObject {
 			return container.NewBorder(nil, nil, widget.NewCheck("", func(value bool) {}), widget.NewButtonWithIcon("", theme.ContentRemoveIcon(), nil), widget.NewLabel("dummy"))
 		},
-		func(id widget.ListItemID, item fyne.CanvasObject) {
-			item.(*fyne.Container).Objects[1].(*widget.Check).Checked = data[id].Done
-			item.(*fyne.Container).Objects[1].(*widget.Check).OnChanged = func(value bool) { data[id].Done = value }
-			item.(*fyne.Container).Objects[0].(*widget.Label).SetText(data[id].Title)
-			item.(*fyne.Container).Objects[2].(*widget.Button).OnTapped = func() { data = append(data[:id], data[id+1:]...) }
+		func(id widget.ListItemID, o fyne.CanvasObject) {
+			o.(*fyne.Container).Objects[1].(*widget.Check).Checked = data[id].Done
+			o.(*fyne.Container).Objects[1].(*widget.Check).OnChanged = func(value bool) { data[id].Done = value }
+			o.(*fyne.Container).Objects[0].(*widget.Label).SetText(data[id].Title)
+			o.(*fyne.Container).Objects[2].(*widget.Button).OnTapped = func() {
+				data = append(data[:id], data[id+1:]...)
+				list.Refresh()
+			}
 		},
 	)
 	list.OnSelected = func(id widget.ListItemID) {
+		currentItemId = id
 		card.SetTitle(data[id].Title)
 		card.SetSubTitle(data[id].Ts.Format(time.RFC822))
 		content.ParseMarkdown(data[id].Comment)
+		card.Refresh()
 	}
 	list.OnUnselected = func(id widget.ListItemID) {
 		card.SetTitle("Select An Item From The List")
@@ -143,6 +190,7 @@ func main() {
 			ts := time.Now()
 			hash := sha256.Sum256([]byte(ts.String()))
 			data = append(data, TodoListItem{hash[:], ts, false, title.Text, comment.Text})
+			list.Refresh()
 		}, w)
 		d.Resize(fyne.NewSize(400, 200))
 		d.Show()
